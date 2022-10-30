@@ -5,35 +5,71 @@
 trigger:
 - master
 
-resources:
-- repo: self
+pool:
+  vmImage: ubuntu-latest
 
-variables:
-  # Container registry service connection established during pipeline creation
-  dockerRegistryServiceConnection: 'cdf92004-8e01-442b-a4d9-f2da3dc68e02'
-  imageRepository: 'amirandarubiodevsecpos'
-  containerRegistry: 'devopsfoudationv2docker.azurecr.io'
-  dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
-  tag: '$(Build.BuildId)'
+steps:
+- task: Gradle@3
+  inputs:
+    gradleWrapperFile: 'gradlew'
+    tasks: 'build'
+    publishJUnitResults: true
+    testResultsFiles: '**/TEST-*.xml'
+    javaHomeOption: 'JDKVersion'
+    sonarQubeRunAnalysis: false
+    spotBugsAnalysis: false
+- task: SonarCloudPrepare@1
+  inputs:
+    SonarCloud: 'Sonarcloud'
+    organization: 'devops-test-v3'
+    projectKey: 'DevOps-Test-v3_pet-clinic'
+    projectName: 'pet-clinic'
 
-  # Agent VM image name
-  vmImageName: 'ubuntu-latest'
+- task: Gradle@3
+  inputs:
+    gradleWrapperFile: 'gradlew'
+    tasks: 'sonarqube'
+    publishJUnitResults: true
+    testResultsFiles: '**/TEST-*.xml'
+    javaHomeOption: 'JDKVersion'
+    sonarQubeRunAnalysis: true
+    sqGradlePluginVersionChoice: 'specify'
+    sonarQubeGradlePluginVersion: '3.3'
+    spotBugsAnalysis: false
 
-stages:
-- stage: Build
-  displayName: Build and push stage
-  jobs:
-  - job: Build
-    displayName: Build
-    pool:
-      vmImage: $(vmImageName)
-    steps:
-    - task: Docker@2
-      displayName: Build and push an image to container registry
-      inputs:
-        command: buildAndPush
-        repository: $(imageRepository)
-        dockerfile: $(dockerfilePath)
-        containerRegistry: $(dockerRegistryServiceConnection)
-        tags: |
-          $(tag)
+
+- task: dependency-check-build-task@6
+  inputs:
+    projectName: 'pet-clinic'
+    scanPath: '$(Build.SourcesDirectory)/build/libs'
+    format: 'HTML'
+
+- task: DockerInstaller@0
+  inputs:
+    dockerVersion: '17.09.0-ce'
+
+- task: Docker@2
+  inputs:
+    containerRegistry: 'Docker'
+    command: 'login'
+
+- task: Docker@2
+  inputs:
+    containerRegistry: 'Docker'
+    repository: 'clagosu/pet-clinic'
+    command: 'build'
+    Dockerfile: '**/Dockerfile'
+    tags: 'latest'
+
+- script: | 
+    sudo apt-get install -y rpm
+    wget https://github.com/aquasecurity/trivy/releases/download/v0.27.1/trivy_0.27.1_Linux-64bit.deb
+    sudo dpkg -i trivy_0.27.1_Linux-64bit.deb
+    trivy image clagosu/pet-clinic:latest
+  displayName: Image Scan
+- task: Docker@2
+  inputs:
+    containerRegistry: 'Docker'
+    repository: 'clagosu/pet-clinic'
+    command: 'push'
+    tags: 'latest'
